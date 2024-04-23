@@ -15,7 +15,7 @@ SOURCES += \
 
 HEADERS += \
     mainwindow.h \
-    qcustomplot.h \
+    qcustomplot.h
 
 
 FORMS += \
@@ -23,6 +23,7 @@ FORMS += \
 
 LIBS += "C:/Program Files (x86)/L-Card/ltr/lib/msvc64/ltr11api.lib"
 LIBS += "C:/Program Files (x86)/L-Card/ltr/lib/msvc64/ltrapi.lib"
+LIBS += "C:/Program Files (x86)/L-Card/ltr/lib/msvc64/ltr27api.lib"
 # Default rules for deployment.
 qnx: target.path = /tmp/$${TARGET}/bin
 else: unix:!android: target.path = /opt/$${TARGET}/bin
