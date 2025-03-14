@@ -3,6 +3,11 @@
 
 #include <QMainWindow>
 #include "qcustomplot.h"
+#include <QMainWindow>
+#include <QVector>
+#include <QDateTime>
+#include <QSharedPointer>
+#include <QMutex>
 
 #define ACQ_BLOCK_SIZE (50)
 #define GRAPH_SIZE (6000000)
@@ -33,6 +38,13 @@ private slots:
 
     void on_pushButton_clicked();
 
+    void on_pushButton_2_clicked();
+
+    void on_pushButton_3_clicked();
+    void stab();
+
+    //void onTemperatureUpdated(double temperature); // Слот для обработки температуры
+
 public:
     Ui::MainWindow *ui;
     QCustomPlot *customplot;    // Объявляем графическое полотно
@@ -40,6 +52,18 @@ public:
     QTimer dataTimer;
         // Объявляем график
 
+private:
+
+   // void stab(double t_min, double t_max, double t_now); // Функция стабилизации
+
+    QVector<double> graph_data;
+    QVector<double> graph_data_therm;
+    QVector<QDateTime> timeStamps; // Вектор для хранения времени
+    QVector<double> timeData; // Вектор для хранения времени в числовом формате
+    double startTime; // Время начала измерений
+    QMutex dataMutex; // Мьютекс для синхронизации доступа к данным
+    QTimer *timer; // Таймер
+    double tmin, tmax;
 };
 
 class waiter : public QObject{
@@ -91,6 +115,7 @@ public slots:
     void Collect_from_thermistor();
 signals:
     void finished(bool);
+    void temperatureUpdated(double temperature); // для стабилизации температуры
 };
 
 
