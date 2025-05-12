@@ -25,8 +25,25 @@ bool waiting_flag = 1;
 bool flag_ltr11;
 bool flag_ltr27;
 bool RunFlag = 0;
-int cycle_timer = 1000; // частота опроса датчиков
-int pulse_length = 100;
+int cycle_timer = 500; // частота опроса датчиков
+int pulse_length = 400;
+
+
+//переменные для пид регулятора
+int time_pulse_max = 400;
+int T_imp;
+bool flag_stab = 0;
+double delta_sum; // интеграл
+double k_prop = 1000;
+double k_int = 1000;    // кэф пропорциональности считал как
+double Q_max;
+double Q_fact;
+double T_fact;
+double P_out;
+double T_stabilize;
+
+QVector<double> T_PID_stab(0);
+
 
 QVector<double> xData(0);
 QVector<double> yData(0);
@@ -45,6 +62,15 @@ QMutex dataMutex; // Мьютекс для синхронизации досту
 
 double k = 0.0039 * 100;
 
+//переключатель DT1-DT8
+bool DT1 = false;
+bool DT2 = false;
+bool DT3 = false;
+bool DT4 = false;
+bool DT5 = false;
+bool DT6 = true;
+bool DT7 = true;
+bool DT8 = true;
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -101,10 +127,18 @@ QString createDailyFolderAndFile(int &fileCounter) {
         dir.mkpath(".");
     }
 
-    QString fileName = dir.filePath(QString("data_%1.csv").arg(fileCounter));
-    while (QFile::exists(fileName)) {
-        fileCounter++;
-        fileName = dir.filePath(QString("data_%1.csv").arg(fileCounter));
+    // Формируем имя файла на основе текущего времени
+    QString fileName = dir.filePath(currentDate.toString("yyyyMMdd_hhmmss") + ".csv");
+
+    // Если файл уже существует, добавляем счетчик
+    if (QFile::exists(fileName)) {
+        fileName = dir.filePath(currentDate.toString("yyyyMMdd_hhmmss") +
+                                QString("_%1.csv").arg(fileCounter));
+        while (QFile::exists(fileName)) {
+            fileCounter++;
+            fileName = dir.filePath(currentDate.toString("yyyyMMdd_hhmmss") +
+                                    QString("_%1.csv").arg(fileCounter));
+        }
     }
 
     return fileName;
@@ -199,7 +233,7 @@ void CollectData::Collect() {
         QString str = QString("%1;%2;%3\n") // Используем точку с запятой как разделитель
                           .arg(j + 1) // Номер замера
                           .arg(buff_data[j]) // Показание
-                          .arg(currentTime.toString("hh:mm:ss")); // Время
+                          .arg(currentTime.toString("hh:mm:ss.zzz")); // Время
 
         if (graph_data.size() >= GRAPH_SIZE) {
             graph_data.pop_back();
@@ -254,7 +288,7 @@ void CollectData_ltr27::Collect_from_thermistor() {
 
     // Если файл пустой, добавляем заголовок
     if (file.size() == 0) {
-        stream << "Number;DT1;DT2;DT3;DT4;DT5;DT6;DT7;DT8;Time\n";
+        stream << "Number;DT1;DT2;DT3;DT4;DT5;DT6;DT7;DT8;P_now;T_imp;K_prop;K_int;T_stab;Time\n";
     }
 
     QDateTime currentTime = QDateTime::currentDateTime();
@@ -285,6 +319,10 @@ void CollectData_ltr27::Collect_from_thermistor() {
     // Добавляем средние значения в graph_data_therm
     for (int i = 0; i < 8; i++) {
         graph_data_therm.push_back(sensorAverages[i*2]);
+        if (i == 0){
+            data_stab.push_back(sensorAverages[i*2]);
+            T_PID_stab.push_back(sensorAverages[i*2]);
+        }
     }
 
     // Формируем строку для записи в файл
@@ -292,7 +330,21 @@ void CollectData_ltr27::Collect_from_thermistor() {
     for (int i = 0; i < 16; i+=2) {
         str += QString(";%1").arg(sensorAverages[i]); // Средние значения для каждого датчика
     }
-    str += QString(";%1\n").arg(currentTime.toString("hh:mm:ss")); // Время
+    str += QString(";%1").arg(P_out);
+    if(T_imp){ // если в переменной есть значение то печатает его, если нет то выводит None
+        str += QString(";%1").arg(T_imp);
+    } else {
+        str += QString(";%1").arg("None");
+    }
+    str += QString(";%1").arg(k_prop);
+    str += QString(";%1").arg(k_int);
+    if(T_stabilize){ // если в переменной есть значение то печатает его, если нет то выводит None
+        str += QString(";%1").arg(T_stabilize);
+    } else {
+        str += QString(";%1").arg("None");
+    }
+
+    str += QString(";%1\n").arg(currentTime.toString("yyyy-MM-dd hh:mm:ss.zzz")); // Время
 
     timeStamps.push_back(currentTime); // Добавляем текущее время
     timeData.push_back((currentTime.toMSecsSinceEpoch() / 1000.0) - startTime);
@@ -359,59 +411,90 @@ void Drawing::draw(Ui::MainWindow *ui) {
 }
 
 void Drawing::draw_ltr27(Ui::MainWindow *ui) {
+    dataMutex.lock();
+
+    // Сначала вычисляем min_count и max_count
     int size = graph_data_therm.size();
+    double min_count = 1000;
+    double max_count = -1000;
 
-
-
-
-    for (int i = 0; i<=8; i++){
-        if ( i == 0) {
-            yData.insert(0, graph_data_therm[i]);
-            xData.insert(0, timeData.last()); // Используем время для оси X
-            ui->label_3->setText(QString::number(yData.last()));
-        }
-        if ( i == 1) {
-            yData2.insert(0, graph_data_therm[i]);
-            xData2.insert(0, timeData.last()); // Используем время для оси X
-            ui->label_3->setText(QString::number(yData2.last()));
-        }
+    // Находим минимальное и максимальное значения
+    if (DT8 && size >= 8) {
+        min_count = qMin(min_count, graph_data_therm[size-8]);
+        max_count = qMax(max_count, graph_data_therm[size-8]);
+    }
+    if (DT7 && size >= 7) {
+        min_count = qMin(min_count, graph_data_therm[size-7]);
+        max_count = qMax(max_count, graph_data_therm[size-7]);
+    }
+    if (DT6 && size >= 6) {
+        min_count = qMin(min_count, graph_data_therm[size-6]);
+        max_count = qMax(max_count, graph_data_therm[size-6]);
     }
 
-    /*for (int i = size-1; i >= 0; i--) {
-        if (i % 2 == 0) {
-
-
-        }
-        if (i % 2 == 1) {
-            yData2.insert(0, graph_data_therm[i]);
-            xData2.insert(0, timeData[i]); // Используем время для оси X
-            ui->label_4->setText(QString::number(graph_data_therm[graph_data_therm.size() - 1]));
-
-        }
-        /*if (i % 3 == 2) {
-            yData3.insert(0, graph_data_therm[i]);
-            xData3.insert(0, timeData[i]); // Используем время для оси X
-            ui->label_5->setText(QString::number(graph_data_therm[i]));
-        }
-    }*/
-
-    ui->termistr->graph(0)->setData(xData, yData);
-    ui->termistr->graph(1)->setData(xData2, yData2);
-    //ui->termistr->graph(2)->setData(xData3, yData3);
-
-    // Настройка диапазона оси X
-    if (!timeData.isEmpty()) {
-        ui->termistr->xAxis->setRange(timeData.first(), timeData.last());
+    // Проверяем, был ли график приближен
+    bool wasZoomed = false;
+    if (ui->termistr->axisRect()->rangeZoom() != Qt::Orientations()) {
+        QCPRange xRange = ui->termistr->xAxis->range();
+        QCPRange yRange = ui->termistr->yAxis->range();
+        wasZoomed = (xRange.size() < (timeData.last() - timeData.first())) ||
+                    (yRange.lower > min_count || yRange.upper < max_count);
     }
 
-    // Настройка отступов сверху и снизу
-    double minY = *std::min_element(yData.begin(), yData.end());
-    double maxY = *std::max_element(yData2.begin(), yData2.end());
-    ui->termistr->yAxis->setRange(minY - 5, maxY + 5); // Отступы сверху и снизу
+    QVector<double> Empty(0);
 
-    ui->termistr->replot();  // Перерисовываем график
+    // Обновляем данные графиков
+    if (DT8 && size >= 8) {
+        yData.insert(0, graph_data_therm[size - 8]);
+        xData.insert(0, timeData.last());
+        ui->label_3->setText(QString::number(yData.first()));
+    }
+    if (DT7 && size >= 7) {
+        yData2.insert(0, graph_data_therm[size - 7]);
+        xData2.insert(0, timeData.last());
+        ui->label_4->setText(QString::number(yData2.first()));
+    }
+    if (DT6 && size >= 6) {
+        yData3.insert(0, graph_data_therm[size - 6]);
+        xData3.insert(0, timeData.last());
+        ui->label_5->setText(QString::number(yData3.first()));
+    }
+
+    // Устанавливаем данные для графиков
+    ui->termistr->graph(0)->setData(DT8 ? xData : Empty, DT8 ? yData : Empty);
+    ui->termistr->graph(1)->setData(DT7 ? xData2 : Empty, DT7 ? yData2 : Empty);
+    ui->termistr->graph(2)->setData(DT6 ? xData3 : Empty, DT6 ? yData3 : Empty);
+
+    // Настройка диапазонов осей
+    MainWindow* mainWindow = qobject_cast<MainWindow*>(ui->termistr->parent());
+    if (!mainWindow || !mainWindow->allowZoom || !wasZoomed) {
+        if (!timeData.isEmpty()) {
+            double xMin = timeData.first();
+            double xMax = timeData.last();
+            if (xMax - xMin < 10) xMax = xMin + 10;
+            ui->termistr->xAxis->setRange(xMin, xMax);
+        }
+
+        double yPadding = qMax(1.0, (max_count - min_count) * 0.1);
+        ui->termistr->yAxis->setRange(min_count - yPadding, max_count + yPadding);
+    }
+    else {
+        QCPRange xRange = ui->termistr->xAxis->range();
+        QCPRange yRange = ui->termistr->yAxis->range();
+
+        double yPadding = qMax(1.0, (max_count - min_count) * 0.1);
+        double newYLower = qMax(yRange.lower, min_count - yPadding);
+        double newYUpper = qMin(yRange.upper, max_count + yPadding);
+
+        ui->termistr->xAxis->setRange(xRange);
+        ui->termistr->yAxis->setRange(newYLower, newYUpper);
+    }
+
+    ui->termistr->replot();
+    dataMutex.unlock();
     emit finished(true);
 }
+
 void Collector::collect() { //функция запуска сборки данных
     // Этот метод будет запущен при старте потока
     // Аллоцируем наш объект. Теперь это происходит в отдельном потоке
@@ -584,6 +667,7 @@ void MainWindow::on_pushButton_2_clicked()
 
 }
 
+
 void MainWindow::stab() {
     dataMutex.lock(); // Защищаем доступ к data_stab
 
@@ -638,6 +722,149 @@ void MainWindow::on_pushButton_3_clicked() {
         // Запускаем таймер с интервалом 5000 мс (5 секунд)
         timer->start(cycle_timer);
     } else {
-        ui->label_10->setText("Ошибка преобразования строки");
+        ui->label_10->setText("Ошибка преобра   зования строки");
     }
 }
+void MainWindow::stab_PID(){
+    int pid_time;
+    double delta_T = 0.0;
+
+    double T_now = T_PID_stab.last();
+    double T_stab = T_stabilize;
+    if (T_now + 0.1 > T_stab) {
+        flag_stab = true;
+    }
+    if(flag_stab == true){
+        delta_sum += delta_T;
+        T_fact = T_PID_stab.last();
+        delta_T = T_stabilize - T_fact;
+        Q_fact = k_prop * delta_T + k_int * delta_sum;
+        if (delta_T <=0){
+            pid_time = 0;
+        } else{
+            pid_time = (Q_fact/Q_max)*cycle_timer;
+        }
+    } else {
+        pid_time = time_pulse_max;
+    }
+    ui->label_16->setText(QString::number(pid_time));
+    //Q_fact = k_prop * delta_T;
+    T_imp = pid_time;
+    startandwrite(pid_time);
+}
+
+void MainWindow::on_pushButton_4_clicked() // это запуск термостабилизации ПИД регулятора
+{
+    // собираем данные
+    QString V = ui->lineEdit->text();
+    QString I = ui->lineEdit_2->text();
+    QString K_prop = ui->lineEdit_3->text();
+    QString K_int = ui->lineEdit_5->text();
+    QString T_stab_string = ui->lineEdit_4->text();
+    double V_d = V.toDouble();
+    double I_d = I.toDouble();
+    Q_max = I_d * V_d;
+    P_out = Q_max;
+    k_prop = K_prop.toDouble();
+    k_int = K_int.toDouble()*(cycle_timer/1000);
+    T_stabilize = T_stab_string.toDouble();
+    ui->label_13->setText(QString::number(Q_max));
+    // Создаем таймер, если он еще не создан
+    //if (!timerPID) {
+        timerPID = new QTimer(this);
+        connect(timerPID, &QTimer::timeout, this, &MainWindow::stab_PID);
+    //}
+
+
+    timerPID->start(cycle_timer);
+
+}
+
+
+
+
+void MainWindow::on_checkBox_stateChanged(int arg1)
+{
+    if (arg1 == Qt::Checked) {
+        DT1 = true;
+    } else {
+        DT1 = false;
+    }
+
+}
+
+
+void MainWindow::on_checkBox_2_stateChanged(int arg1)
+{
+    if (arg1 == Qt::Checked) {
+        DT2 = true;
+    } else {
+        DT2 = false;
+    }
+}
+
+
+void MainWindow::on_checkBox_3_stateChanged(int arg1)
+{
+    if (arg1 == Qt::Checked) {
+        DT3 = true;
+    } else {
+        DT3 = false;
+    }
+}
+
+
+void MainWindow::on_checkBox_4_stateChanged(int arg1)
+{
+    if (arg1 == Qt::Checked) {
+        DT4 = true;
+    } else {
+        DT4 = false;
+    }
+}
+
+
+void MainWindow::on_checkBox_5_stateChanged(int arg1)
+{
+    if (arg1 == Qt::Checked) {
+        DT5 = true;
+    } else {
+        DT5 = false;
+    }
+}
+
+void MainWindow::on_checkBox_6_stateChanged(int arg1)
+{
+    if (arg1 == Qt::Checked) {
+        DT6 = true;
+    } else {
+        DT6 = false;
+    }
+}
+
+
+void MainWindow::on_checkBox_7_stateChanged(int arg1)
+{
+    if (arg1 == Qt::Checked) {
+        DT7 = true;
+    } else {
+        DT7 = false;
+    }
+}
+
+
+void MainWindow::on_checkBox_8_stateChanged(int arg1)
+{
+    if (arg1 == Qt::Checked) {
+        DT8 = true;
+    } else {
+        DT8 = false;
+    }
+}
+
+
+void MainWindow::on_checkBox_9_stateChanged(int arg1)
+{
+    allowZoom = (arg1 == Qt::Checked);
+}
+

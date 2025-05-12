@@ -43,13 +43,36 @@ private slots:
     void on_pushButton_3_clicked();
     void stab();
 
+    void stab_PID();
+
     //void onTemperatureUpdated(double temperature); // Слот для обработки температуры
+
+    void on_pushButton_4_clicked();
+
+    void on_checkBox_5_stateChanged(int arg1);
+
+    void on_checkBox_stateChanged(int arg1);
+
+    void on_checkBox_2_stateChanged(int arg1);
+
+    void on_checkBox_3_stateChanged(int arg1);
+
+    void on_checkBox_4_stateChanged(int arg1);
+
+    void on_checkBox_6_stateChanged(int arg1);
+
+    void on_checkBox_7_stateChanged(int arg1);
+
+    void on_checkBox_8_stateChanged(int arg1);
+
+    void on_checkBox_9_stateChanged(int arg1);
 
 public:
     Ui::MainWindow *ui;
     QCustomPlot *customplot;    // Объявляем графическое полотно
     QCPGraph *graphic;
     QTimer dataTimer;
+
         // Объявляем график
 
 private:
@@ -63,7 +86,9 @@ private:
     double startTime; // Время начала измерений
     QMutex dataMutex; // Мьютекс для синхронизации доступа к данным
     QTimer *timer; // Таймер
+    QTimer *timerPID; // Таймер
     double tmin, tmax;
+    bool allowZoom = false; // Добавьте эту строку в приватную секцию класса MainWindow
 };
 
 class waiter : public QObject{
