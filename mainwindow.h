@@ -28,6 +28,7 @@ public:
 
 
     void setupDataTimer();
+    bool isZoomAllowed() const { return allowZoom; }  // Геттер
 
 private slots:
     void on_pushButton_startLtr11_clicked();

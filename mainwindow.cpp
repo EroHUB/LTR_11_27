@@ -467,7 +467,7 @@ void Drawing::draw_ltr27(Ui::MainWindow *ui) {
 
     // Настройка диапазонов осей
     MainWindow* mainWindow = qobject_cast<MainWindow*>(ui->termistr->parent());
-    if (!mainWindow || !mainWindow->allowZoom || !wasZoomed) {
+    if (!mainWindow || !mainWindow->isZoomAllowed() || !wasZoomed) {
         if (!timeData.isEmpty()) {
             double xMin = timeData.first();
             double xMax = timeData.last();
